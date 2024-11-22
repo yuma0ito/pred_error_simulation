@@ -181,6 +181,7 @@ cython_debug/
 
 /analysis/
 /output/
+/output_decomp/
 *.sh
 sh/
 **/stan/*

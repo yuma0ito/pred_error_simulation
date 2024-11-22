@@ -65,7 +65,8 @@ def main(args):
         "y": stan_scores.T,  # (n_item, n_examinee)
     }
 
-    stan_model = CmdStanModel(stan_file="stan/gpcm.stan")
+    stan_file = "stan/gpcm_decomp.stan" if args.decomp else "stan/gpcm.stan"
+    stan_model = CmdStanModel(stan_file=stan_file)
 
     fit = stan_model.sample(
         data=stan_data,
@@ -79,17 +80,25 @@ def main(args):
     theta_samples = fit.stan_variable("theta")
     alpha_samples = fit.stan_variable("alpha")
     beta_samples = fit.stan_variable("beta")
+    if args.decomp:
+        d_samples = fit.stan_variable("d")
 
     theta_mean, theta_std = theta_samples.mean(axis=0), theta_samples.std(axis=0)
     alpha_mean, alpha_std = alpha_samples.mean(axis=0), alpha_samples.std(axis=0)
     beta_mean, beta_std = beta_samples.mean(axis=0), beta_samples.std(axis=0)
+    if args.decomp:
+        d_mean, d_std = d_samples.mean(axis=0), d_samples.std(axis=0)
+    else:
+        d_mean, d_std = None, None
 
     # save result
+    output_dir = "output_decomp" if args.decomp else "output"
     if args.estimation == "all":
-        output_path = os.path.join("../output", args.dataset, "all")
+        output_path = os.path.join("..", output_dir, args.dataset, "all")
     else:
         output_path = os.path.join(
-            "../output",
+            "..",
+            output_dir,
             args.dataset,
             args.mask_pattern,
             args.set_dir,
@@ -103,12 +112,12 @@ def main(args):
             )
     os.makedirs(output_path, exist_ok=False)
     save_result(
+        is_decomp=args.decomp,
         output_path=output_path,
         args=args,
         n_item=config.n_item,
         n_examinee=config.n_examinee,
         n_score=max(n_scores),
-        n_warmup=args.n_warmup,
         examinees=examinees,
         fit=fit,
         theta_mean=theta_mean,
@@ -117,6 +126,8 @@ def main(args):
         alpha_std=alpha_std,
         beta_mean=beta_mean,
         beta_std=beta_std,
+        d_mean=d_mean,
+        d_std=d_std,
         error_pattern=error_pattern,
         scores_with_error=scores_with_error,
     )
@@ -202,6 +213,12 @@ if __name__ == "__main__":
             required=True,
             help="error namber",
         )
+    parser.add_argument(
+        "--decomp",
+        action="store_true",
+        default=False,
+        help="Whether to decompose step parameters",
+    )
     args = parser.parse_args()
 
     main(args)

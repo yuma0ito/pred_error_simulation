@@ -33,12 +33,12 @@ def read_is_missing(missing_file_path):
 
 
 def save_result(
+    is_decomp,
     output_path,
     args,
     n_item,
     n_examinee,
     n_score,
-    n_warmup,
     examinees,
     fit,
     theta_mean,
@@ -47,183 +47,8 @@ def save_result(
     alpha_std,
     beta_mean,
     beta_std,
-    error_pattern=None,
-    scores_with_error=None,
-):
-    summary = fit.summary()["R_hat"]
-    r_hat = summary[
-        summary.index.to_series().str.contains(r"^(theta|alpha|beta)(\[\d+(,\d+)*\])?$")
-    ]
-    fit_data = az.from_cmdstanpy(fit)
-
-    # examinee_params.csv
-    df = pd.DataFrame(
-        np.stack((np.array(examinees), theta_mean, theta_std), axis=1),
-        columns=["examinee", "theta", "std"],
-    )
-    df["theta"] = df["theta"].astype(float)
-    df["std"] = df["std"].astype(float)
-    df.to_csv(
-        os.path.join(output_path, "examinee_params.csv"),
-        float_format="%.5f",
-        index=None,
-    )
-
-    # item_params.csv
-    df = pd.DataFrame(
-        np.concatenate(
-            (
-                np.arange(1, n_item + 1).reshape(-1, 1),
-                alpha_mean.reshape(-1, 1),
-                beta_mean,
-            ),
-            axis=1,
-        ),
-        columns=["item", "alpha"] + [f"beta{i+1}" for i in range(n_score - 1)],
-    )
-    df["item"] = df["item"].astype(int)
-    df.to_csv(
-        os.path.join(output_path, "item_params.csv"),
-        float_format="%.5f",
-        index=None,
-    )
-
-    # item_params_std.csv
-    df = pd.DataFrame(
-        np.concatenate(
-            (
-                np.arange(1, n_item + 1).reshape(-1, 1),
-                alpha_std.reshape(-1, 1),
-                beta_std,
-            ),
-            axis=1,
-        ),
-        columns=["item", "alpha"] + [f"beta{i+1}" for i in range(n_score - 1)],
-    )
-    df["item"] = df["item"].astype(int)
-    df.to_csv(
-        os.path.join(output_path, "item_params_std.csv"),
-        float_format="%.5f",
-        index=None,
-    )
-
-    if args.estimation == "imputation":
-        # error pattern
-        df = pd.DataFrame(
-            np.concatenate(
-                (
-                    np.array(examinees).reshape(-1, 1),
-                    error_pattern,
-                ),
-                axis=1,
-            ),
-            columns=["examinee"] + [f"item{i+1}" for i in range(n_item)],
-            dtype=float,
-        )
-        for i in range(n_item):
-            df[f"item{i+1}"] = df[f"item{i+1}"].astype(int)
-        df.to_csv(
-            os.path.join(output_path, "error_pattern.csv"),
-            index=None,
-        )
-
-        df = pd.DataFrame(
-            np.concatenate(
-                (
-                    np.array(examinees).reshape(-1, 1),
-                    scores_with_error,
-                ),
-                axis=1,
-            ),
-            columns=["examinee"] + [f"item{i+1}" for i in range(n_item)],
-            dtype=float,
-        )
-        for i in range(n_item):
-            df[f"item{i+1}"] = df[f"item{i+1}"].astype(int)
-        df.to_csv(
-            os.path.join(output_path, "scores_with_error.csv"),
-            index=None,
-        )
-
-    # convergence check
-    convergence_dir_path = os.path.join(output_path, "convergence_check")
-    os.makedirs(convergence_dir_path, exist_ok=False)
-
-    # theta autocorrelation
-    autocorr_theta = fit_data.posterior["theta"].sel(
-        theta_dim_0=slice(0, min(n_examinee, 10))
-    )
-    az.plot_autocorr(autocorr_theta)
-    plt.tight_layout()
-    plt.savefig(os.path.join(convergence_dir_path, "autocorrelation_plot_theta.png"))
-    plt.close()
-
-    # alpha autocorrelation
-    autocorr_alpha = fit_data.posterior["alpha"].sel(
-        alpha_dim_0=slice(0, min(n_item, 10))
-    )
-    az.plot_autocorr(autocorr_alpha)
-    plt.tight_layout()
-    plt.savefig(os.path.join(convergence_dir_path, "autocorrelation_plot_alpha.png"))
-    plt.close()
-
-    # beta autocorrelation
-    autocorr_beta = fit_data.posterior["beta"].sel(
-        beta_dim_0=slice(0, n_item),
-        beta_dim_1=slice(0, n_score - 1),
-    )
-    az.plot_autocorr(autocorr_beta)
-    plt.tight_layout()
-    plt.savefig(os.path.join(convergence_dir_path, "autocorrelation_plot_beta.png"))
-    plt.close()
-
-    # trace
-    coords = {
-        "theta_dim_0": range(min(n_examinee, 10)),
-        "alpha_dim_0": range(min(n_item, 10)),
-        "beta_dim_0": range(min(n_item, 1)),
-        "beta_dim_1": range(min(n_score - 1, 10)),
-    }
-    az.plot_trace(fit_data, var_names=["theta", "alpha", "beta"], coords=coords)
-    plt.tight_layout()
-    plt.savefig(os.path.join(convergence_dir_path, "trace_plot.png"))
-    plt.close()
-
-    # Rhat
-    r_hat.to_csv(
-        os.path.join(convergence_dir_path, "r_hat.csv"),
-        index_label="parameter",
-        float_format="%.5f",
-    )
-
-    # log
-    log_dir_path = os.path.join(output_path, "log")
-    os.makedirs(log_dir_path, exist_ok=False)
-    fit.save_csvfiles(dir=log_dir_path)
-
-    # metadata file
-    metadata_path = os.path.join(output_path, "metadata.json")
-    with open(metadata_path, mode="w", encoding="utf-8") as f:
-        json.dump(vars(args), f, indent=4)
-
-
-def save_result2(
-    output_path,
-    args,
-    n_item,
-    n_examinee,
-    n_score,
-    n_warmup,
-    examinees,
-    fit,
-    theta_mean,
-    theta_std,
-    alpha_mean,
-    alpha_std,
-    beta_mean,
-    beta_std,
-    d_mean,
-    d_std,
+    d_mean=None,
+    d_std=None,
     error_pattern=None,
     scores_with_error=None,
 ):
@@ -249,18 +74,31 @@ def save_result2(
     )
 
     # item_params.csv
-    df = pd.DataFrame(
-        np.concatenate(
-            (
-                np.arange(1, n_item + 1).reshape(-1, 1),
-                alpha_mean.reshape(-1, 1),
-                beta_mean.reshape(-1, 1),
-                d_mean,
+    if is_decomp:
+        df = pd.DataFrame(
+            np.concatenate(
+                (
+                    np.arange(1, n_item + 1).reshape(-1, 1),
+                    alpha_mean.reshape(-1, 1),
+                    beta_mean.reshape(-1, 1),
+                    d_mean,
+                ),
+                axis=1,
             ),
-            axis=1,
-        ),
-        columns=["item", "alpha", "beta"] + [f"d{i+1}" for i in range(n_score - 1)],
-    )
+            columns=["item", "alpha", "beta"] + [f"d{i+1}" for i in range(n_score - 1)],
+        )
+    else:
+        df = pd.DataFrame(
+            np.concatenate(
+                (
+                    np.arange(1, n_item + 1).reshape(-1, 1),
+                    alpha_mean.reshape(-1, 1),
+                    beta_mean,
+                ),
+                axis=1,
+            ),
+            columns=["item", "alpha"] + [f"beta{i+1}" for i in range(n_score - 1)],
+        )
     df["item"] = df["item"].astype(int)
     df.to_csv(
         os.path.join(output_path, "item_params.csv"),
@@ -269,18 +107,31 @@ def save_result2(
     )
 
     # item_params_std.csv
-    df = pd.DataFrame(
-        np.concatenate(
-            (
-                np.arange(1, n_item + 1).reshape(-1, 1),
-                alpha_std.reshape(-1, 1),
-                beta_std.reshape(-1, 1),
-                d_std,
+    if is_decomp:
+        df = pd.DataFrame(
+            np.concatenate(
+                (
+                    np.arange(1, n_item + 1).reshape(-1, 1),
+                    alpha_std.reshape(-1, 1),
+                    beta_std.reshape(-1, 1),
+                    d_std,
+                ),
+                axis=1,
             ),
-            axis=1,
-        ),
-        columns=["item", "alpha", "beta"] + [f"d{i+1}" for i in range(n_score - 1)],
-    )
+            columns=["item", "alpha", "beta"] + [f"d{i+1}" for i in range(n_score - 1)],
+        )
+    else:
+        df = pd.DataFrame(
+            np.concatenate(
+                (
+                    np.arange(1, n_item + 1).reshape(-1, 1),
+                    alpha_std.reshape(-1, 1),
+                    beta_std,
+                ),
+                axis=1,
+            ),
+            columns=["item", "alpha"] + [f"beta{i+1}" for i in range(n_score - 1)],
+        )
     df["item"] = df["item"].astype(int)
     df.to_csv(
         os.path.join(output_path, "item_params_std.csv"),
@@ -332,7 +183,7 @@ def save_result2(
 
     # theta autocorrelation
     autocorr_theta = fit_data.posterior["theta"].sel(
-        theta_dim_0=slice(0, min(n_examinee, 10))
+        theta_dim_0=slice(min(n_examinee, 10))
     )
     az.plot_autocorr(autocorr_theta)
     plt.tight_layout()
@@ -340,40 +191,58 @@ def save_result2(
     plt.close()
 
     # alpha autocorrelation
-    autocorr_alpha = fit_data.posterior["alpha"].sel(
-        alpha_dim_0=slice(0, min(n_item, 10))
-    )
+    autocorr_alpha = fit_data.posterior["alpha"].sel(alpha_dim_0=slice(min(n_item, 10)))
     az.plot_autocorr(autocorr_alpha)
     plt.tight_layout()
     plt.savefig(os.path.join(convergence_dir_path, "autocorrelation_plot_alpha.png"))
     plt.close()
 
     # beta autocorrelation
-    autocorr_beta = fit_data.posterior["beta"].sel(beta_dim_0=slice(0, min(n_item, 10)))
+    if is_decomp:
+        autocorr_beta = fit_data.posterior["beta"].sel(
+            beta_dim_0=slice(min(n_item, 10))
+        )
+    else:
+        autocorr_beta = fit_data.posterior["beta"].sel(
+            beta_dim_0=slice(n_item),
+            beta_dim_1=slice(n_score - 1),
+        )
     az.plot_autocorr(autocorr_beta)
     plt.tight_layout()
     plt.savefig(os.path.join(convergence_dir_path, "autocorrelation_plot_beta.png"))
     plt.close()
 
-    # d autocorrelation
-    autocorr_d = fit_data.posterior["d"].sel(
-        d_dim_0=slice(0, n_item),
-        d_dim_1=slice(0, n_score - 1),
-    )
-    az.plot_autocorr(autocorr_d)
-    plt.tight_layout()
-    plt.savefig(os.path.join(convergence_dir_path, "autocorrelation_plot_d.png"))
-    plt.close()
+    if is_decomp:
+        # d autocorrelation
+        autocorr_d = fit_data.posterior["d"].sel(
+            d_dim_0=slice(n_item),
+            d_dim_1=slice(n_score - 1),
+        )
+        az.plot_autocorr(autocorr_d)
+        plt.tight_layout()
+        plt.savefig(os.path.join(convergence_dir_path, "autocorrelation_plot_d.png"))
+        plt.close()
 
     # trace
-    coords = {
-        "theta_dim_0": range(min(n_examinee, 10)),
-        "alpha_dim_0": range(min(n_item, 10)),
-        "beta_dim_0": range(min(n_item, 10)),
-        "d_dim_0": range(min(n_item, 1)),
-        "d_dim_1": range(min(n_score - 1, 10)),
-    }
-    az.plot_trace(fit_data, var_names=["theta", "alpha", "beta", "d"], coords=coords)
+    if is_decomp:
+        coords = {
+            "theta_dim_0": range(min(n_examinee, 10)),
+            "alpha_dim_0": range(min(n_item, 10)),
+            "beta_dim_0": range(min(n_item, 10)),
+            "d_dim_0": range(min(n_item, 1)),
+            "d_dim_1": range(min(n_score - 1, 10)),
+        }
+        az.plot_trace(
+            fit_data, var_names=["theta", "alpha", "beta", "d"], coords=coords
+        )
+    else:
+        coords = {
+            "theta_dim_0": range(min(n_examinee, 10)),
+            "alpha_dim_0": range(min(n_item, 10)),
+            "beta_dim_0": range(min(n_item, 1)),
+            "beta_dim_1": range(min(n_score - 1, 10)),
+        }
+        az.plot_trace(fit_data, var_names=["theta", "alpha", "beta"], coords=coords)
     plt.tight_layout()
     plt.savefig(os.path.join(convergence_dir_path, "trace_plot.png"))
     plt.close()
